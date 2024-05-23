@@ -6,12 +6,9 @@ from dagster import (
     load_assets_from_modules,
 )
 
-from .resources import DataGeneratorResource
 
 
 from . import assets
-
-datagen = DataGeneratorResource()  # Make the resource
 
 
 
@@ -30,7 +27,4 @@ hackernews_schedule = ScheduleDefinition(
 defs = Definitions(
     assets=all_assets,
     schedules=[hackernews_schedule],
-    resources={
-        "hackernews_api": datagen,  # Add the newly-made resource here
-    },
 )

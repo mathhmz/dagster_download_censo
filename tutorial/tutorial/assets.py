@@ -5,7 +5,7 @@ import enum
 import json
 from typing import Optional
 from logging import Logger, getLogger
-from dagster import asset, SourceAsset, AssetIn, AssetExecutionContext, MaterializeResult
+from dagster import asset, SourceAsset, AssetIn, AssetExecutionContext, MaterializeResult,multi_asset,AssetOut,AssetKey
 
 class Action(enum.Enum):
     DownloadCenso = "DownloadCenso"
@@ -54,16 +54,29 @@ def from_json(json_str: str) -> Packet:
 class DownloadCensoPacket(Packet):
     def __init__(self, action: Action, censo: Censo, geo_level: GeoLevel):
         super().__init__(action, censo, geo_level)
-
-# Example usage
-packet = DownloadCensoPacket(action=Action.DownloadCenso, censo=Censo.Censo2010, geo_level=GeoLevel.Setores)
-
-@asset
-def censo(context: AssetExecutionContext) -> gpd.GeoDataFrame:
-    censo_packet = packet
+        
+def generate_packages(context: AssetExecutionContext):
+    censos = [censo for censo in Censo]
+    geo_levels = [geolevel for geolevel in GeoLevel]
     
-    if censo_packet.action == Action.DownloadCenso:
-        data_packet = from_json(str(censo_packet))
+    packets = []
+    
+    for censo in censos:
+        for geo_level in geo_levels:
+            
+            packet = DownloadCensoPacket(action=  Action.DownloadCenso, censo = censo, geo_level= geo_level)  
+            context.log.info(f'Generated packet is: {packet}')
+            packets.append(packet)
+            
+    return packets
+    
+    
+          
+
+def download_censo_by_packet(context: AssetExecutionContext,download_censo_packet:DownloadCensoPacket):
+    
+      if download_censo_packet.action == Action.DownloadCenso:
+        data_packet = from_json(str(download_censo_packet))
         print(data_packet)
         context.log.info(f'packet is: {data_packet}')
         
@@ -107,3 +120,29 @@ def censo(context: AssetExecutionContext) -> gpd.GeoDataFrame:
         
         context.log.info(f"Invalid packet type: {type(data_packet)}")
         return None
+
+@multi_asset(
+    outs={
+        "censo2010_setores": AssetOut(key=AssetKey("censo2010_setores")),
+        "censo2010_distritos": AssetOut(key=AssetKey("censo2010_distritos")),
+        "censo2022_setores": AssetOut(key=AssetKey("censo2022_setores")),
+        "censo2022_distritos": AssetOut(key=AssetKey("censo2022_distritos")),
+    }
+)
+def process_censo(context: AssetExecutionContext):
+    packets = generate_packages(context)
+    
+    assets = []
+    
+    for packet in packets:
+        asset = download_censo_by_packet(download_censo_packet = packet, context= context)
+        
+        assets.append(asset)
+        
+    return assets[0], assets[1], assets[2], assets[3]
+        
+    
+    
+    
+    
+  
