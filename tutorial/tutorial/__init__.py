@@ -4,6 +4,7 @@ from dagster import (
     ScheduleDefinition,
     define_asset_job,
     load_assets_from_modules,
+    FilesystemIOManager
 )
 
 
@@ -27,4 +28,7 @@ hackernews_schedule = ScheduleDefinition(
 defs = Definitions(
     assets=all_assets,
     schedules=[hackernews_schedule],
+    resources={
+        "io_manager": FilesystemIOManager()
+    },
 )
