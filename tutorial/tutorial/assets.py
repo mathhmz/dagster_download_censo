@@ -5,7 +5,7 @@ import enum
 import json
 from typing import Optional
 from logging import Logger, getLogger
-from dagster import asset, SourceAsset, AssetIn, AssetExecutionContext, MaterializeResult,multi_asset,AssetOut,AssetKey, FilesystemIOManager, Out
+from dagster import asset, SourceAsset, AssetIn, AssetExecutionContext, MaterializeResult,multi_asset,AssetOut,AssetKey, FilesystemIOManager, Out, AssetMaterialization
 import zipfile
 import io
 
@@ -101,7 +101,7 @@ def download_censo_by_packet(context: AssetExecutionContext,download_censo_packe
             context.log.info(f"Censo: {censo}, Geo Level: {geo_level}")
 
             if censo == Censo.Censo2010:
-                nivel_str = 'setores_censitarios' if geo_level == GeoLevel.Setores else None
+                nivel_str = 'setores_censitarios' if geo_level == GeoLevel.Setores else GeoLevel.Distritos.value.lower()
                 url = f'https://geoftp.ibge.gov.br/organizacao_do_territorio/malhas_territoriais/malhas_de_setores_censitarios__divisoes_intramunicipais/censo_2010/setores_censitarios_shp/sp/sp_{nivel_str}.zip'
             elif censo == Censo.Censo2022:
                 sufixo = '_Distrito' if geo_level == GeoLevel.Distritos else ''
@@ -111,24 +111,24 @@ def download_censo_by_packet(context: AssetExecutionContext,download_censo_packe
                 return None
             
             context.log.info(f"Downloading file from {url}")
-            
-            os.makedirs("data", exist_ok=True)
+            cwd = os.path.abspath("tutorial/data")   
             file_name = f"censo_{censo.value}_{geo_level.value}.zip"
-            file_path = f"./data/{file_name}"
+            file_path = f"{cwd}/{file_name}"
             packet = LoadCensoPacket(Action.LoadCenso, censo, geo_level, file_path)
+            context.log.info(cwd)
+            context.log.info(file_path)
             
-            if os.path.exists(file_path):
+                     
+            if os.path.exists(path=file_path):
                 context.log.info(f"File already stored as {file_path}")
-                censo = [None,packet]
-                return censo
+                return packet
             
             response = requests.get(url)
             context.log.info(f"Response status code: {response.status_code}")
             
             if response.status_code == 200:
 
-                censo [response.content, packet]
-                return censo
+                return packet
             
             else:
                 context.log.info(f"Failed to download file from {url}")
@@ -144,31 +144,13 @@ def load_censo_by_packet(context: AssetExecutionContext, load_censo_packet:LoadC
         data_packet = from_json(str(load_censo_packet))
 
         if isinstance(data_packet, LoadCensoPacket):
-            censo = Censo(data_packet.payloads[0])
-            geo_level = GeoLevel(data_packet.payloads[1])
             file_path = data_packet.payloads[2]
 
             context.log.info(f"Loading file from {file_path}")
 
-            if os.path.exists(file_path):
-                context.log.info(f"File already stored as {file_path}")
-                if zipfile.is_zipfile(file_path):
-                    file_contents = {}
-                    with zipfile.ZipFile(file_path, 'r') as zip_ref:
-                        for file_name in zip_ref.namelist():
-                            with zip_ref.open(file_name) as file:
-                                file_contents[file_name] = file.read()
-                    return file_contents
-                else:
-                    context.log.info(f"File is not a zip file: {file_path}")
-
-
-
-            context.log.info(f"File not found: {file_path}")
-            return None
-
-        context.log.info(f"Invalid packet type: {type(data_packet)}")
-        return None
+            file = gpd.read_file(file_path)
+            
+            return file
     
 @multi_asset(
     outs={
@@ -199,21 +181,12 @@ def download_censo_files(context: AssetExecutionContext):
         "censo2022_setores": {AssetKey("censo2022_setores_zip")},
         "censo2022_distritos": {AssetKey("censo2022_distritos_zip")},
     })
-def load_censo_files(censo2010_setores_zip, censo2010_distritos_zip, censo2022_setores_zip, censo2022_distritos_zip):
-    args = [censo2010_setores_zip, censo2010_distritos_zip, censo2022_setores_zip, censo2022_distritos_zip]
-    print(args)
-    packets = []
-    assets = []
-    for arg in args:
-        packet = arg[1]
-        packets.append(packet)
-    
-    for packet in packets:
-        asset = load_censo_by_packet(load_censo_packet=packet, context=AssetExecutionContext)
-        assets.append(asset)
-        
-    return assets[0], assets[1], assets[2], assets[3]
-    
+def load_censo_files(context: AssetExecutionContext, censo2010_setores_zip, censo2010_distritos_zip, censo2022_setores_zip, censo2022_distritos_zip):
+    assets = [censo2010_setores_zip, censo2010_distritos_zip, censo2022_setores_zip, censo2022_distritos_zip]
+    files = []
+    for asset in assets:
+        file = load_censo_by_packet(context= context, load_censo_packet= asset)
+        files.append(file)
     
     
     

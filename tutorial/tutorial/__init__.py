@@ -29,6 +29,6 @@ defs = Definitions(
     assets=all_assets,
     schedules=[hackernews_schedule],
     resources={
-        "io_manager": FilesystemIOManager()
+        "io_manager": FilesystemIOManager(base_dir="/home/hydra/dagster_download_censo/tutorial/tutorial/data")
     },
 )
