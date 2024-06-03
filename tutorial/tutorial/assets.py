@@ -12,6 +12,12 @@ import requests
 import os
  
 import geopandas as gpd
+
+from zipfile import ZipFile
+from io import BytesIO, StringIO
+import shutil
+
+
  
 """ Criando os Enums para garantir que os valores computados como string sejam sempre os mesmos nas referencias;
     """
@@ -55,8 +61,8 @@ class DownloadCensoPacket(Packet):
         super().__init__(action, censo, geo_level)
        
 class LoadCensoPacket(Packet):
-    def __init__(self, action: Action, censo: Censo, geo_level: GeoLevel, path: str, hash: str):
-        super().__init__(action, censo, geo_level, path, hash)
+    def __init__(self, action: Action, censo: Censo, geo_level: GeoLevel, file: bytes, hash: str):
+        super().__init__(action, censo, geo_level, file, hash)
        
    
 """Agora vamos adicionar a funcao de desserializar os pacotes e contruir classes instanciadas no escopo global a partir dos mesmos"""
@@ -100,7 +106,7 @@ def generate_hash_for_downloaded_censo(data):
     return hex_dig
  
  
-def download_censo_by_packet(context: AssetExecutionContext,download_censo_packet:DownloadCensoPacket):
+def download_censo_by_packet(context: AssetExecutionContext,download_censo_packet:DownloadCensoPacket) -> bytes:
    
       if download_censo_packet.action == Action.DownloadCenso:
         data_packet = from_json(str(download_censo_packet))
@@ -123,29 +129,20 @@ def download_censo_by_packet(context: AssetExecutionContext,download_censo_packe
                 context.log.error(f"Unsupported censo year: {censo}")
                 return None
            
-            os.makedirs("tutorial/data", exist_ok=True)
-           
-            cwd = os.path.abspath("tutorial/data")  
-            file_name = f"censo_{censo.value}_{geo_level.value}.zip"
-            file_path = f"{cwd}/{file_name}"            
-                     
-            if os.path.exists(path=file_path):
-                context.log.info(f"File already stored as {file_path}")
-                hash = generate_hash_for_downloaded_censo(file_path)
-                packet = LoadCensoPacket(Action.LoadCenso, censo, geo_level, file_path, hash= hash)
-                return packet
-           
             context.log.info(f"Downloading file from {url}")
             response = requests.get(url)
             context.log.info(f"Response status code: {response.status_code}")
+            
+            
            
             if response.status_code == 200:
-                with open(file_path, 'wb') as f:
-                    f.write(response.content)
-                context.log.info(f"File stored as {file_path}")
-                hash = generate_hash_for_downloaded_censo(file_path)
-                packet = LoadCensoPacket(Action.LoadCenso, censo, geo_level, file_path, hash= hash)
+                file = response.content
+                context.log.info(f"File stored succesfully")
+                hash = generate_hash_for_downloaded_censo(file)
+                packet = LoadCensoPacket(Action.LoadCenso, censo = censo, geo_level = geo_level, file = file, hash= hash)
                 return packet
+            
+                
            
             else:
                 context.log.info(f"Failed to download file from {url}")
@@ -196,8 +193,40 @@ def download_censo_files(context: AssetExecutionContext):
 def load_censo_files(context: AssetExecutionContext, censo2010_setores_zip, censo2010_distritos_zip, censo2022_setores_zip, censo2022_distritos_zip):
     assets = [censo2010_setores_zip, censo2010_distritos_zip, censo2022_setores_zip, censo2022_distritos_zip]
     files = []
+    
     for asset in assets:
-        file = gpd.read_file(asset.payloads[-2])
-        files.append(file)
-       
+        context.log.info(f'Processing asset with hash: {asset.payloads[-1]}')
+        zip_bytes = asset.payloads[-2]
+        
+        if os.path.exists("temp"):
+            shutil.rmtree("temp")
+            context.log.info(f'Removed previous attemp temp directory')
+        os.makedirs("temp")
+        temp_dir = os.path.abspath("temp")
+        
+        context.log.info(f'Created temp directory: {temp_dir}')
+        censo = asset.payloads[0]
+        geo_level = asset.payloads[1]
+
+                
+        with ZipFile(BytesIO(zip_bytes), 'r') as zipfile:
+            context.log.info(f'Contents of zipfile: {zipfile.namelist()}')
+            if ".json" in str(zipfile.namelist()):
+                path = f"{temp_dir}/{censo}_{geo_level}.zip"
+                with open(path, 'wb') as f:
+                    f.write(zip_bytes)
+                dataframe = gpd.read_file(path)
+
+
+            else:
+                zipfile.extractall(temp_dir)
+                dataframe = gpd.read_file(temp_dir)
+        
+        files.append(dataframe)
+        context.log.info(f'Loaded dataframe with {len(dataframe)} records from {censo, geo_level}')
+            
+        shutil.rmtree(temp_dir)
+        context.log.info(f'Removed temp directory: {temp_dir}')
+    
+    
     return files[0], files[1], files[2], files[3]
