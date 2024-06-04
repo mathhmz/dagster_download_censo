@@ -1,5 +1,4 @@
 import enum
-Enum = enum.Enum
  
 import json
  
@@ -12,12 +11,12 @@ import requests
 import os
  
 import geopandas as gpd
-
+ 
 from zipfile import ZipFile
 from io import BytesIO, StringIO
 import shutil
-
-
+ 
+ 
  
 """ Criando os Enums para garantir que os valores computados como string sejam sempre os mesmos nas referencias;
     """
@@ -132,8 +131,8 @@ def download_censo_by_packet(context: AssetExecutionContext,download_censo_packe
             context.log.info(f"Downloading file from {url}")
             response = requests.get(url)
             context.log.info(f"Response status code: {response.status_code}")
-            
-            
+           
+           
            
             if response.status_code == 200:
                 file = response.content
@@ -141,8 +140,8 @@ def download_censo_by_packet(context: AssetExecutionContext,download_censo_packe
                 hash = generate_hash_for_downloaded_censo(file)
                 packet = LoadCensoPacket(Action.LoadCenso, censo = censo, geo_level = geo_level, file = file, hash= hash)
                 return packet
-            
-                
+           
+               
            
             else:
                 context.log.info(f"Failed to download file from {url}")
@@ -150,6 +149,29 @@ def download_censo_by_packet(context: AssetExecutionContext,download_censo_packe
        
         context.log.info(f"Invalid packet type: {type(data_packet)}")
         return None
+   
+def check_if_file_was_updated_hash(keys: list, assets: list, context):
+    old_version_hashs = []
+    for i, _ in enumerate(keys):
+        materialization_event = context.instance.get_latest_materialization_event(asset_key = AssetKey([keys[i]]))
+        if materialization_event is not None:
+            hash_code = materialization_event.asset_materialization.metadata["hash_code"].value
+            old_version_hashs.append(hash_code)
+        else:
+            old_version_hashs.append(None)  
+
+    print(f"Length of old_version_hashs: {len(old_version_hashs)}")
+    print(f"Length of assets: {len(assets)}")
+
+    for i, asset in enumerate(assets):
+        if old_version_hashs[i] is None:
+            return True
+
+        if asset.payloads[-1] != old_version_hashs[i]:
+            return True
+
+    return False
+ 
    
  
 """Agora criamos nosso asset que gera os pacotes para download, e para cada um, faz o download e salva na pasta determinada."""
@@ -168,12 +190,22 @@ def download_censo_files(context: AssetExecutionContext):
     packets = generate_download_censo_packets(context)
     assets = []
     hashs = []
+    keys = ["censo2010_setores_zip", "censo2010_distritos_zip", "censo2022_setores_zip", "censo2022_distritos_zip"]
     for packet in packets:
         asset = download_censo_by_packet(download_censo_packet = packet, context= context)
         hash_code = asset.payloads[-1]
         assets.append(asset)
         hashs.append(hash_code)
-    return Output(value = assets[0], output_name="censo2010_setores_zip", metadata={"hash_code": hashs[0]}), Output(value = assets[1], output_name="censo2010_distritos_zip", metadata={"hash_code": hashs[1]}), Output(value = assets[2], output_name="censo2022_setores_zip", metadata={"hash_code": hashs[2]}), Output(value = assets[3], output_name="censo2022_distritos_zip", metadata={"hash_code": hashs[3]})
+       
+    if check_if_file_was_updated_hash(keys = keys, assets = assets, context = context):
+        yield Output(value = assets[0], output_name="censo2010_setores_zip", metadata={"hash_code": hashs[0]})
+        yield Output(value = assets[1], output_name="censo2010_distritos_zip", metadata={"hash_code": hashs[1]})
+        yield Output(value = assets[2], output_name="censo2022_setores_zip", metadata={"hash_code": hashs[2]})
+        yield Output(value = assets[3], output_name="censo2022_distritos_zip", metadata={"hash_code": hashs[3]})
+   
+    else:
+            context.log.info(f"The files are up to date")
+    return None
  
 """Agora criamos o Asset que carrega esses dados em um GeoDataFrame"""
  
@@ -193,22 +225,22 @@ def download_censo_files(context: AssetExecutionContext):
 def load_censo_files(context: AssetExecutionContext, censo2010_setores_zip, censo2010_distritos_zip, censo2022_setores_zip, censo2022_distritos_zip):
     assets = [censo2010_setores_zip, censo2010_distritos_zip, censo2022_setores_zip, censo2022_distritos_zip]
     files = []
-    
+   
     for asset in assets:
         context.log.info(f'Processing asset with hash: {asset.payloads[-1]}')
         zip_bytes = asset.payloads[-2]
-        
+       
         if os.path.exists("temp"):
             shutil.rmtree("temp")
             context.log.info(f'Removed previous attemp temp directory')
         os.makedirs("temp")
         temp_dir = os.path.abspath("temp")
-        
+       
         context.log.info(f'Created temp directory: {temp_dir}')
         censo = asset.payloads[0]
         geo_level = asset.payloads[1]
-
-                
+ 
+               
         with ZipFile(BytesIO(zip_bytes), 'r') as zipfile:
             context.log.info(f'Contents of zipfile: {zipfile.namelist()}')
             if ".json" in str(zipfile.namelist()):
@@ -216,17 +248,17 @@ def load_censo_files(context: AssetExecutionContext, censo2010_setores_zip, cens
                 with open(path, 'wb') as f:
                     f.write(zip_bytes)
                 dataframe = gpd.read_file(path)
-
-
+ 
+ 
             else:
                 zipfile.extractall(temp_dir)
                 dataframe = gpd.read_file(temp_dir)
-        
+       
         files.append(dataframe)
         context.log.info(f'Loaded dataframe with {len(dataframe)} records from {censo, geo_level}')
-            
+           
         shutil.rmtree(temp_dir)
         context.log.info(f'Removed temp directory: {temp_dir}')
-    
-    
+   
+   
     return files[0], files[1], files[2], files[3]
