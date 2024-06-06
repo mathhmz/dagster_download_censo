@@ -4,7 +4,7 @@ import json
  
 import hashlib
  
-from dagster import (multi_asset, asset, AssetOut, AssetKey, AssetExecutionContext, MaterializeResult, EventRecordsFilter, DagsterEventType, Output)
+from dagster import (multi_asset, asset, AssetOut, AssetKey, AssetExecutionContext, MaterializeResult, EventRecordsFilter, DagsterEventType, Output, MetadataValue)
  
 import requests
  
@@ -172,7 +172,7 @@ def check_if_file_was_updated_hash(keys: list, assets: list, context):
 
     return False
 
-@asset(io_manager_key="io_manager", name="censo2022_distritos_file")
+@asset(io_manager_key="io_manager", name="censo2022_distritos_file", output_required=False)
 def censo2022_distritos_file(context: AssetExecutionContext):
     packet = DownloadCensoPacket(action=Action.DownloadCenso, censo=Censo.Censo2022, geo_level=GeoLevel.Distritos)
     asset = download_censo_by_packet(download_censo_packet=packet, context=context)
@@ -217,7 +217,7 @@ def censo2022_distritos_gdf(context: AssetExecutionContext, censo2022_distritos_
         shutil.rmtree(temp_dir)
         context.log.info(f'Removed temp directory: {temp_dir}')
         
-        return Output(value = dataframe)
+        return Output(value = dataframe, metadata = {"preview" : MetadataValue.md(dataframe.sample(10).to_markdown())})
    
  
 
