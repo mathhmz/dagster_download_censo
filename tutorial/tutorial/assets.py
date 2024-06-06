@@ -4,7 +4,7 @@ import json
  
 import hashlib
  
-from dagster import (multi_asset, AssetOut, AssetKey, AssetExecutionContext, MaterializeResult, EventRecordsFilter, DagsterEventType, Output)
+from dagster import (multi_asset, asset, AssetOut, AssetKey, AssetExecutionContext, MaterializeResult, EventRecordsFilter, DagsterEventType, Output)
  
 import requests
  
@@ -171,7 +171,57 @@ def check_if_file_was_updated_hash(keys: list, assets: list, context):
             return True
 
     return False
+
+@asset(io_manager_key="io_manager", name="censo2022_distritos_file")
+def censo2022_distritos_file(context: AssetExecutionContext):
+    packet = DownloadCensoPacket(action=Action.DownloadCenso, censo=Censo.Censo2022, geo_level=GeoLevel.Distritos)
+    asset = download_censo_by_packet(download_censo_packet=packet, context=context)
+    hash_code = asset.payloads[-1]
+    if check_if_file_was_updated_hash(["censo2022_distritos_file"], [asset], context=context):
+        return Output(value=asset, metadata={"hash_code": hash_code})
+    else:
+        context.log.info(f"The file is up to date")
+    return None
+
+@asset(io_manager_key= "io_manager", name="censo2022_distritos_gdf")
+def censo2022_distritos_gdf(context: AssetExecutionContext, censo2022_distritos_file):
+        asset = censo2022_distritos_file
+        context.log.info(f'Processing asset with hash: {asset.payloads[-1]}')
+        zip_bytes = asset.payloads[-2]
+       
+        if os.path.exists("temp"):
+            shutil.rmtree("temp")
+            context.log.info(f'Removed previous attemp temp directory')
+        os.makedirs("temp")
+        temp_dir = os.path.abspath("temp")
+       
+        context.log.info(f'Created temp directory: {temp_dir}')
+        censo = asset.payloads[0]
+        geo_level = asset.payloads[1]
  
+               
+        with ZipFile(BytesIO(zip_bytes), 'r') as zipfile:
+            context.log.info(f'Contents of zipfile: {zipfile.namelist()}')
+            if ".json" in str(zipfile.namelist()):
+                path = f"{temp_dir}/{censo}_{geo_level}.zip"
+                with open(path, 'wb') as f:
+                    f.write(zip_bytes)
+                dataframe = gpd.read_file(path)
+ 
+ 
+            else:
+                zipfile.extractall(temp_dir)
+                dataframe = gpd.read_file(temp_dir)
+        context.log.info(f'Loaded dataframe with {len(dataframe)} records from {censo, geo_level}')
+           
+        shutil.rmtree(temp_dir)
+        context.log.info(f'Removed temp directory: {temp_dir}')
+        
+        return Output(value = dataframe)
+   
+ 
+
+
    
  
 """Agora criamos nosso asset que gera os pacotes para download, e para cada um, faz o download e salva na pasta determinada."""
